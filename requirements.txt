@@ -1,0 +1,7 @@
+python-telegram-bot==21.*
+anthropic
+playwright
+recipe-scrapers
+kptncook
+python-dotenv
+httpx

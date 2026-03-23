@@ -1,0 +1,34 @@
+# Claude Code IDE-Einstellungen (lokal)
+.claude/
+
+# Persönliche Dokumente
+*.docx
+*.pdf
+
+# Secrets – niemals ins Repo!
+.env
+
+# Datenbank (enthält persönliche Bestelldaten)
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Playwright
+playwright-report/
+test-results/
+
+# Logs
+*.log

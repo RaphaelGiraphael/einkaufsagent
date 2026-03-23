@@ -410,6 +410,30 @@ async def handle_new_inv_callback(update: Update, context: ContextTypes.DEFAULT_
             "quantity": qty, "unit": unit, "shelf_life": "mittel",
         }], exact=True)
         context.user_data.pop("new_inv", None)
+
+        # Warenkorb prüfen und Artikel ggf. entfernen
+        from shop.cart import get_cart_state_items, clear_ingredient_from_cart_state
+        cart_state = get_cart_state_items()
+        matching = [cs for cs in cart_state
+                    if cs.get("ingredient_name", "").lower() == name.lower()
+                    or name.lower() in cs.get("product_name", "").lower()]
+
+        if matching:
+            product_name = matching[0].get("product_name", name)
+            await query.edit_message_text(
+                f"✅ *{name}* gespeichert – entferne *{product_name}* aus dem Warenkorb...",
+                parse_mode="Markdown",
+            )
+            from shop.browser import BrowserSession
+            from shop.cart import remove_cart_item
+            try:
+                async with BrowserSession() as session:
+                    await session.login()
+                    await remove_cart_item(session, product_name)
+                clear_ingredient_from_cart_state(name)
+            except Exception as e:
+                logger.warning("Warenkorb-Entfernung nach Picker-Save fehlgeschlagen: %s", e)
+
         await query.answer(f"✅ {name} gespeichert", show_alert=False)
         await _send_inventory(query, edit=True)
         return

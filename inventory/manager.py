@@ -9,6 +9,7 @@ Haltbarkeits-Logik (nach jeder Bestellung):
 
 import logging
 import os
+import time
 from datetime import date, timedelta
 
 from db.schema import get_connection
@@ -170,11 +171,21 @@ def deduct_inventory(ingredients: list[dict]) -> None:
 # Haltbarkeits-Decay
 # ---------------------------------------------------------------------------
 
+_DECAY_LAST_RUN: float = 0.0
+_DECAY_INTERVAL: float = 60.0  # Maximal einmal pro Minute ausführen
+
+
 def apply_shelf_life_decay() -> None:
     """
     Schreibt alte Vorräte ab basierend auf ihrer Haltbarkeitskategorie.
-    Wird automatisch vor jeder Vorratsprüfung aufgerufen.
+    Wird automatisch vor jeder Vorratsprüfung aufgerufen (max. 1x/Minute).
     """
+    global _DECAY_LAST_RUN
+    now = time.monotonic()
+    if now - _DECAY_LAST_RUN < _DECAY_INTERVAL:
+        return
+    _DECAY_LAST_RUN = now
+
     today = date.today()
     conn = get_connection(_db_path())
     updated = 0

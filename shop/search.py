@@ -9,6 +9,7 @@ Ablauf:
   5. Ergebnis in Cache speichern
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -329,6 +330,9 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
         }
         cart_product_urls = {cs["product_url"] for cs in cart_state if cs.get("product_url")}
 
+        # ── Phase 1: Entscheiden was bestellt werden muss ────────────────────
+        search_queue = []  # (ingredient, search_ingredient, is_cnt, needed_raw)
+
         for ingredient in ingredients:
             name_lower = ingredient["name"].lower()
             needed_raw = float(ingredient.get("quantity") or 1)
@@ -342,14 +346,12 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                 from_inventory.append({**ingredient, "quantity": used_from_inv})
 
             # ── Nicht-zählbar (Öl, Gewürze, g/ml …): Presence-Check ──────────
-            # Eine Flasche / ein Päckchen deckt alle Rezept-Mengen ab.
             if not is_cnt:
                 if inv_qty_orig > 0:
                     continue  # Inventar reicht aus
                 if name_lower in cart_ingredient_names:
                     already_in_cart.append({**ingredient})
                     continue
-                # Noch nicht vorhanden → bestellen
                 search_ingredient = ingredient
 
             # ── Zählbar (Stück, Zehe, Bund …): Mengen-Vergleich ─────────────
@@ -378,9 +380,27 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                     )
                 search_ingredient = {**ingredient, "quantity": remaining_orig}
 
-            # ── Produkt suchen + zum Warenkorb hinzufügen ────────────────────
+            search_queue.append((ingredient, search_ingredient, is_cnt, needed_raw))
+
+        # ── Phase 2: Browser-Suche (sequenziell – eine Session) ──────────────
+        search_results = []
+        for ingredient, search_ingredient, is_cnt, needed_raw in search_queue:
             candidates = await search_product(session, search_ingredient)
-            best = await match_best_product(search_ingredient, candidates)
+            search_results.append(candidates)
+
+        # ── Phase 3: Claude-Matching parallel ────────────────────────────────
+        match_tasks = [
+            match_best_product(si, cands)
+            for (_, si, _, _), cands in zip(search_queue, search_results)
+        ]
+        bests = await asyncio.gather(*match_tasks, return_exceptions=True)
+
+        # ── Phase 4: Ergebnisse verarbeiten ──────────────────────────────────
+        for (ingredient, search_ingredient, is_cnt, needed_raw), best in zip(search_queue, bests):
+            if isinstance(best, Exception):
+                logger.error("Matching-Fehler für '%s': %s", ingredient["name"], best)
+                not_found.append(ingredient)
+                continue
 
             if best is None:
                 not_found.append(ingredient)
@@ -430,7 +450,7 @@ async def _search_live(session: BrowserSession, search_term: str) -> list[dict]:
     search_url = f"{BASE_URL}/search?search={search_term}"
     try:
         await session.goto(search_url, timeout=15000)
-        await session.page.wait_for_load_state("domcontentloaded")
+        await session.page.wait_for_load_state("domcontentloaded", timeout=8000)
     except Exception as e:
         logger.error("Suche fehlgeschlagen für '%s': %s", search_term, e)
         return []

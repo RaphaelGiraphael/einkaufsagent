@@ -5,6 +5,7 @@ Empfängt Nachrichten aus erlaubten Gruppen und leitet sie an den Recipe Parser 
 
 import logging
 import os
+import uuid
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -728,10 +729,10 @@ async def _process_recipe(
         # Unsichere Artikel: Inline-Buttons zur Bestätigung
         uncertain = result.get("uncertain", [])
         if uncertain:
-            context.bot_data.setdefault("pending_items", [])
+            context.bot_data.setdefault("pending_items", {})
             for item in uncertain:
-                idx = len(context.bot_data["pending_items"])
-                context.bot_data["pending_items"].append(item)
+                uid = uuid.uuid4().hex[:12]
+                context.bot_data["pending_items"][uid] = item
 
                 ingredient_name = item.get("ingredient_name", item.get("name", "?"))
                 product_name = item.get("name", "?")
@@ -739,8 +740,8 @@ async def _process_recipe(
                 price_str = f" – {str(price).replace('.', ',')} €" if price else ""
 
                 keyboard = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✅ Hinzufügen", callback_data=f"cart_add_{idx}"),
-                    InlineKeyboardButton("❌ Überspringen", callback_data=f"cart_skip_{idx}"),
+                    InlineKeyboardButton("✅ Hinzufügen", callback_data=f"cart_add_{uid}"),
+                    InlineKeyboardButton("❌ Überspringen", callback_data=f"cart_skip_{uid}"),
                 ]])
                 await update.message.reply_text(
                     f"❓ *Passt das?*\n"
@@ -764,17 +765,17 @@ async def handle_cart_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
 
-    data = query.data  # "cart_add_0" oder "cart_skip_0"
-    parts = data.split("_")
+    data = query.data  # "cart_add_<uid>" oder "cart_skip_<uid>"
+    parts = data.split("_", 2)
     action = parts[1]
-    idx = int(parts[2])
+    uid = parts[2]
 
-    pending = context.bot_data.get("pending_items", [])
-    if idx >= len(pending):
+    pending = context.bot_data.get("pending_items", {})
+    item = pending.pop(uid, None)  # Aus Dict entfernen → kein Memory-Leak
+    if item is None:
         await query.edit_message_text("❌ Artikel nicht mehr verfügbar (Bot neu gestartet?).")
         return
 
-    item = pending[idx]
     product_name = item.get("name", "?")
 
     if action == "skip":

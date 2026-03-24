@@ -55,22 +55,27 @@ async def _fetch_rewe_shop(product_name: str) -> dict | None:
 
         p = products[0]
         name = p.get("productName") or p.get("name", "")
+        p_embedded = p.get("_embedded", {})
+        logger.info("Rewe p._embedded Keys für '%s': %s", product_name, list(p_embedded.keys()))
 
         # Preis steckt im _embedded des Produkts → articles[0].listing
-        articles = p.get("_embedded", {}).get("articles", [])
+        articles = p_embedded.get("articles", [])
         if not articles:
             return None
 
-        listing = articles[0].get("listing", {})
+        article = articles[0]
+        logger.info("Rewe article Keys: %s", list(article.keys())[:12])
+        listing = article.get("listing", article)  # Fallback: article selbst
+        logger.info("Rewe listing Keys: %s", list(listing.keys())[:12])
 
         # Preis/kg aus grammagePrice
         grammage = listing.get("grammagePrice", {})
         price_per_kg = grammage.get("value")
 
-        # Fallback: regulären Preis nehmen (kein echtes /kg aber besser als nichts)
+        # Fallback: regulären Preis nehmen
         if not price_per_kg:
             regular = listing.get("price", {})
-            price_per_kg = regular.get("value")
+            price_per_kg = regular.get("value") if isinstance(regular, dict) else regular
 
         if price_per_kg:
             val = float(price_per_kg)
@@ -78,6 +83,7 @@ async def _fetch_rewe_shop(product_name: str) -> dict | None:
                 val /= 100
             return {"price_per_kg": val, "name": name, "source": "Rewe"}
 
+        logger.info("Rewe: kein Preis gefunden für '%s'", product_name)
         return None
 
     except Exception as e:

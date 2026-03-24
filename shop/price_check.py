@@ -48,14 +48,17 @@ async def _fetch_via_claude_search(product_name: str) -> dict | None:
                 "role": "user",
                 "content": (
                     f"Suche den aktuellen Preis pro kg für '{product_name}' bei einem deutschen "
-                    f"Supermarkt (Rewe, Edeka, Kaufland, Aldi oder Lidl). "
-                    f"Vergleiche möglichst das gleiche oder sehr ähnliche Produkt (gleiche Qualität, "
-                    f"Bio wenn Bio, gleicher Verarbeitungsgrad). "
-                    f"Antworte in genau diesem Format ohne weiteren Text:\n"
+                    f"Supermarkt (Rewe, Edeka, Kaufland, Aldi oder Lidl).\n\n"
+                    f"Vorgehen:\n"
+                    f"1. Suche zuerst nach exakt diesem Produkt inkl. Marke (falls Marke enthalten)\n"
+                    f"2. Falls nicht gefunden: suche nach dem qualitativ ähnlichsten Produkt "
+                    f"(Bio↔Bio, gleicher Fettgehalt, gleiche Herkunft wenn relevant)\n"
+                    f"3. Vergleiche NICHT konventionell mit Bio oder umgekehrt\n\n"
+                    f"Antworte in genau diesem Format:\n"
                     f"PREIS: <zahl in Euro pro kg>\n"
                     f"PRODUKT: <exakter Produktname den du gefunden hast>\n"
                     f"MARKT: <Marktname>\n"
-                    f"Falls kein vergleichbares Produkt gefunden: antworte nur mit 'KEIN TREFFER'"
+                    f"Falls kein vergleichbares Produkt gefunden: nur 'KEIN TREFFER'"
                 ),
             }],
         )

@@ -3,6 +3,7 @@ Telegram Bot Handler für den Böck Einkaufsagenten.
 Empfängt Nachrichten aus erlaubten Gruppen und leitet sie an den Recipe Parser weiter.
 """
 
+import asyncio
 import logging
 import os
 import uuid
@@ -658,6 +659,47 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await _process_recipe(update, context, text=caption, image_bytes=bytes(image_bytes))
 
 
+async def _send_price_warnings(update: Update, cart_items: list[dict]) -> None:
+    """Läuft im Hintergrund: Preisvergleich via Claude Web Search, dann Folgenachricht."""
+    import asyncio as _asyncio
+    from shop.price_check import check_price_markup
+
+    items_with_kg = [i for i in cart_items if i.get("price_per_kg")]
+    if not items_with_kg:
+        return
+
+    tasks = [check_price_markup(i["name"], i["price_per_kg"]) for i in items_with_kg]
+    results = await _asyncio.gather(*tasks, return_exceptions=True)
+
+    warnings = {
+        item["name"]: w
+        for item, w in zip(items_with_kg, results)
+        if isinstance(w, dict)
+    }
+    if not warnings:
+        return
+
+    from utils.report import format_report
+    # Nur den Preisvergleich-Block ausgeben
+    lines = ["📊 *Preisvergleich:*"]
+    for product_name, w in warnings.items():
+        boeck = w["boeck_price_per_kg"]
+        ref = w["ref_price_per_kg"]
+        diff = w["diff_pct"] * 100
+        ref_product = w.get("ref_product", "")
+        source = w.get("source", "Supermarkt")
+        ref_str = f"\n    ↳ _{ref_product}_" if ref_product and ref_product.lower() != product_name.lower() else ""
+        lines.append(
+            f"  · *{product_name}*: {boeck:.2f} €/kg bei Böck "
+            f"vs. {ref:.2f} €/kg bei {source} (+{diff:.0f}%){ref_str}"
+        )
+
+    try:
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    except Exception as e:
+        logger.warning("Preisvergleich-Nachricht fehlgeschlagen: %s", e)
+
+
 async def _process_recipe(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -701,7 +743,7 @@ async def _process_recipe(
         if from_inventory:
             deduct_inventory(from_inventory)
 
-        # 5. Report formatieren
+        # 5. Report sofort schicken (ohne Preisvergleich – der kommt als Folgenachricht)
         report = format_report(
             cart_items=result.get("cart_items", []),
             not_found=result.get("not_found", []),
@@ -710,7 +752,6 @@ async def _process_recipe(
             cart_url=result.get("cart_url", ""),
             total=result.get("total", 0.0),
             already_in_cart=result.get("already_in_cart", []),
-            price_warnings=result.get("price_warnings", {}),
         )
 
         # 6. Bestellung in DB speichern + cart_state verknüpfen
@@ -726,6 +767,13 @@ async def _process_recipe(
         link_cart_state_to_order(order_id)
 
         await update.message.reply_text(report, parse_mode="Markdown")
+
+        # 7. Preisvergleich im Hintergrund – kommt als separate Folgenachricht
+        cart_items = result.get("cart_items", [])
+        if cart_items:
+            asyncio.create_task(
+                _send_price_warnings(update, cart_items)
+            )
 
         # Unsichere Artikel: Inline-Buttons zur Bestätigung
         uncertain = result.get("uncertain", [])

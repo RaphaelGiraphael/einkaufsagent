@@ -60,6 +60,7 @@ async def _fetch_rewe_shop(product_name: str) -> dict | None:
 
         # Preis steckt im _embedded des Produkts → articles[0].listing
         articles = p_embedded.get("articles", [])
+        logger.info("Rewe articles Typ=%s Len=%s", type(articles).__name__, len(articles) if isinstance(articles, (list, dict)) else "?")
         if not articles:
             return None
 

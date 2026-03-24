@@ -45,35 +45,53 @@ async def _fetch_rewe_shop(product_name: str) -> dict | None:
                 headers=_HEADERS,
             )
         if resp.status_code != 200:
+            logger.info("Rewe-Shop-API Status %d für '%s'", resp.status_code, product_name)
             return None
         data = resp.json()
+
+        # Debug: Struktur loggen (einmalig pro Key)
+        top_keys = list(data.keys())[:8]
+        logger.info("Rewe-API Top-Keys für '%s': %s", product_name, top_keys)
 
         # Format A: _embedded.products (HAL)
         products = data.get("_embedded", {}).get("products", [])
         # Format B: products direkt
         if not products:
             products = data.get("products", [])
+        # Format C: items
         if not products:
+            products = data.get("items", [])
+        if not products:
+            logger.info("Rewe-API: Keine Produkte in Antwort. Keys: %s", top_keys)
             return None
 
         p = products[0]
+        logger.info("Rewe erstes Produkt Keys: %s", list(p.keys())[:10])
+
         name = p.get("name", "")
 
-        # Preis/kg aus grammage-Feld
-        pricing = p.get("pricing", {})
-        grammage = pricing.get("grammage", {})
-        price_per_kg = grammage.get("price")
+        # Preis/kg aus verschiedenen möglichen Feldern
+        pricing = p.get("pricing", p.get("price", {}))
+        if isinstance(pricing, dict):
+            grammage = pricing.get("grammage", {})
+            price_per_kg = grammage.get("price") or pricing.get("pricePerUnit")
+        else:
+            price_per_kg = None
+
+        # Direktfeld pricePerUnit
+        if not price_per_kg:
+            price_per_kg = p.get("pricePerUnit") or p.get("unitPrice") or p.get("basePrice")
+
         if price_per_kg:
-            # Rewe liefert manchmal Cent-Werte als Integer
-            if price_per_kg > 500:
-                price_per_kg /= 100
+            if float(price_per_kg) > 500:
+                price_per_kg = float(price_per_kg) / 100
             return {"price_per_kg": float(price_per_kg), "name": name, "source": "Rewe"}
 
-        # Fallback: Stückpreis nehmen (kein kg-Vergleich möglich)
+        logger.info("Rewe: kein Preis/kg für '%s'. Produkt-Keys: %s", product_name, list(p.keys())[:10])
         return None
 
     except Exception as e:
-        logger.debug("Rewe-Shop-API fehlgeschlagen für '%s': %s", product_name, e)
+        logger.info("Rewe-Shop-API Fehler für '%s': %s", product_name, e)
         return None
 
 

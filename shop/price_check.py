@@ -45,53 +45,43 @@ async def _fetch_rewe_shop(product_name: str) -> dict | None:
                 headers=_HEADERS,
             )
         if resp.status_code != 200:
-            logger.info("Rewe-Shop-API Status %d für '%s'", resp.status_code, product_name)
             return None
         data = resp.json()
 
-        # Debug: Struktur loggen (einmalig pro Key)
-        top_keys = list(data.keys())[:8]
-        logger.info("Rewe-API Top-Keys für '%s': %s", product_name, top_keys)
-
-        # Format A: _embedded.products (HAL)
+        # Produkte liegen in _embedded.products (HAL-Format)
         products = data.get("_embedded", {}).get("products", [])
-        # Format B: products direkt
         if not products:
-            products = data.get("products", [])
-        # Format C: items
-        if not products:
-            products = data.get("items", [])
-        if not products:
-            logger.info("Rewe-API: Keine Produkte in Antwort. Keys: %s", top_keys)
             return None
 
         p = products[0]
-        logger.info("Rewe erstes Produkt Keys: %s", list(p.keys())[:10])
+        name = p.get("productName") or p.get("name", "")
 
-        name = p.get("name", "")
+        # Preis steckt im _embedded des Produkts → articles[0].listing
+        articles = p.get("_embedded", {}).get("articles", [])
+        if not articles:
+            return None
 
-        # Preis/kg aus verschiedenen möglichen Feldern
-        pricing = p.get("pricing", p.get("price", {}))
-        if isinstance(pricing, dict):
-            grammage = pricing.get("grammage", {})
-            price_per_kg = grammage.get("price") or pricing.get("pricePerUnit")
-        else:
-            price_per_kg = None
+        listing = articles[0].get("listing", {})
 
-        # Direktfeld pricePerUnit
+        # Preis/kg aus grammagePrice
+        grammage = listing.get("grammagePrice", {})
+        price_per_kg = grammage.get("value")
+
+        # Fallback: regulären Preis nehmen (kein echtes /kg aber besser als nichts)
         if not price_per_kg:
-            price_per_kg = p.get("pricePerUnit") or p.get("unitPrice") or p.get("basePrice")
+            regular = listing.get("price", {})
+            price_per_kg = regular.get("value")
 
         if price_per_kg:
-            if float(price_per_kg) > 500:
-                price_per_kg = float(price_per_kg) / 100
-            return {"price_per_kg": float(price_per_kg), "name": name, "source": "Rewe"}
+            val = float(price_per_kg)
+            if val > 500:
+                val /= 100
+            return {"price_per_kg": val, "name": name, "source": "Rewe"}
 
-        logger.info("Rewe: kein Preis/kg für '%s'. Produkt-Keys: %s", product_name, list(p.keys())[:10])
         return None
 
     except Exception as e:
-        logger.info("Rewe-Shop-API Fehler für '%s': %s", product_name, e)
+        logger.debug("Rewe-Shop-API Fehler für '%s': %s", product_name, e)
         return None
 
 

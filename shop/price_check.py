@@ -29,114 +29,107 @@ _HEADERS = {
 }
 
 
-async def _fetch_rewe_shop(product_name: str) -> dict | None:
-    """Haupt-Endpunkt: Rewe Desktop-Shop API."""
+import re as _re
+
+
+async def _fetch_rewe_html(product_name: str) -> dict | None:
+    """
+    Scrapet die Rewe-Suchseite und extrahiert Preise aus dem eingebetteten JSON.
+    Funktioniert ohne Markt-ID.
+    """
     try:
-        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             resp = await client.get(
-                "https://shop.rewe.de/api/products",
-                params={
-                    "search": product_name,
-                    "page": 1,
-                    "objectsPerPage": 3,
-                    "sorting": "RELEVANCE_DESC",
-                    "locale": "de_DE",
-                },
-                headers=_HEADERS,
+                "https://www.rewe.de/suche/",
+                params={"search": product_name},
+                headers={**_HEADERS, "Accept": "text/html,application/xhtml+xml"},
             )
         if resp.status_code != 200:
             return None
-        data = resp.json()
 
-        embedded = data.get("_embedded", {})
-        logger.info("Rewe Top-_embedded Keys für '%s': %s", product_name, list(embedded.keys()))
+        text = resp.text
 
-        # Produkte
-        products = embedded.get("products", [])
-        if not products:
-            return None
+        # Rewe bettet Preisdaten als JSON-LD oder in data-Attributen ein
+        # Versuch 1: application/json script-Tags
+        for script_match in _re.finditer(
+            r'<script[^>]+type=["\']application/json["\'][^>]*>(.*?)</script>',
+            text, _re.DOTALL
+        ):
+            try:
+                blob = json.loads(script_match.group(1))
+                result = _extract_price_from_blob(blob, product_name)
+                if result:
+                    return result
+            except Exception:
+                continue
 
-        # Artikel mit Preis suchen – entweder pro Produkt oder top-level
-        articles = embedded.get("articles", [])
-        if not articles:
-            for p in products:
-                articles = p.get("_embedded", {}).get("articles", [])
-                if articles:
-                    break
+        # Versuch 2: __NEXT_DATA__ (Next.js)
+        nd_match = _re.search(
+            r'<script id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>', text, _re.DOTALL
+        )
+        if nd_match:
+            try:
+                blob = json.loads(nd_match.group(1))
+                result = _extract_price_from_blob(blob, product_name)
+                if result:
+                    return result
+            except Exception:
+                pass
 
-        logger.info("Rewe articles gesamt: %d", len(articles))
-        if not articles:
-            return None
+        # Versuch 3: Preis-Pattern direkt im HTML (€/kg oder €/100g)
+        # Sucht z.B. "2,49 €/kg" oder "(1,99 €/100g)"
+        kg_matches = _re.findall(r'(\d+[,\.]\d+)\s*€\s*/\s*(?:1\s*)?kg', text, _re.IGNORECASE)
+        if kg_matches:
+            # Günstigsten Preis nehmen (erster plausibler Wert)
+            prices = []
+            for m in kg_matches[:10]:
+                try:
+                    prices.append(float(m.replace(",", ".")))
+                except ValueError:
+                    pass
+            if prices:
+                price = min(p for p in prices if 0.5 < p < 500)
+                if price:
+                    logger.info("Rewe HTML-Preis/kg für '%s': %.2f", product_name, price)
+                    return {"price_per_kg": price, "name": product_name, "source": "Rewe"}
 
-        # Ersten Artikel mit Preis/kg nehmen
-        for article in articles:
-            logger.info("Rewe article Keys: %s", list(article.keys())[:12])
-            # Preis/kg direkt
-            price_per_kg = (
-                article.get("grammagePrice")
-                or article.get("pricePerUnit")
-                or article.get("unitPrice")
-            )
-            # Nested unter listing oder price
-            if not price_per_kg:
-                listing = article.get("listing", {})
-                price_per_kg = (
-                    listing.get("grammagePrice", {}).get("value")
-                    or listing.get("pricePerUnit")
-                )
-            if not price_per_kg:
-                price_obj = article.get("price", {})
-                if isinstance(price_obj, dict):
-                    price_per_kg = price_obj.get("grammage") or price_obj.get("pricePerUnit")
-
-            name = (
-                article.get("productName")
-                or article.get("name")
-                or products[0].get("productName", product_name)
-            )
-            if price_per_kg:
-                val = float(price_per_kg)
-                if val > 500:
-                    val /= 100
-                logger.info("Rewe Preis/kg für '%s': %.2f", product_name, val)
-                return {"price_per_kg": val, "name": name, "source": "Rewe"}
-
-        logger.info("Rewe: kein Preis/kg in keinem Artikel für '%s'", product_name)
         return None
 
     except Exception as e:
-        logger.debug("Rewe-Shop-API Fehler für '%s': %s", product_name, e)
+        logger.debug("Rewe-HTML-Scraping Fehler für '%s': %s", product_name, e)
         return None
 
 
-async def _fetch_rewe_mobile(product_name: str) -> dict | None:
-    """Fallback: Rewe Mobile-App API."""
-    try:
-        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
-            resp = await client.get(
-                "https://mobile.rewe.de/api/v3/products",
-                params={"query": product_name, "page": 1},
-                headers=_HEADERS,
-            )
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        products = data.get("products", [])
-        if not products:
-            return None
-
-        p = products[0]
-        name = p.get("name", "")
-        price_per_kg = p.get("pricePerUnit") or p.get("unitPrice")
-        if price_per_kg:
-            if price_per_kg > 500:
-                price_per_kg /= 100
-            return {"price_per_kg": float(price_per_kg), "name": name, "source": "Rewe"}
+def _extract_price_from_blob(blob: dict | list, product_name: str) -> dict | None:
+    """Durchsucht rekursiv ein JSON-Objekt nach Preis/kg-Feldern."""
+    if isinstance(blob, list):
+        for item in blob[:20]:
+            result = _extract_price_from_blob(item, product_name)
+            if result:
+                return result
+        return None
+    if not isinstance(blob, dict):
         return None
 
-    except Exception as e:
-        logger.debug("Rewe-Mobile-API fehlgeschlagen für '%s': %s", product_name, e)
-        return None
+    # Typische Rewe-Felder für Preis/kg
+    for key in ("grammagePrice", "pricePerUnit", "unitPrice", "basePrice"):
+        val = blob.get(key)
+        if val and isinstance(val, (int, float)) and 0.5 < val < 500:
+            name = blob.get("name") or blob.get("productName") or product_name
+            return {"price_per_kg": float(val), "name": name, "source": "Rewe"}
+        if isinstance(val, dict):
+            inner = val.get("value") or val.get("amount")
+            if inner and isinstance(inner, (int, float)) and 0.5 < float(inner) < 500:
+                name = blob.get("name") or blob.get("productName") or product_name
+                return {"price_per_kg": float(inner), "name": name, "source": "Rewe"}
+
+    # Rekursiv in verschachtelte Dicts
+    for v in blob.values():
+        if isinstance(v, (dict, list)):
+            result = _extract_price_from_blob(v, product_name)
+            if result:
+                return result
+    return None
 
 
 async def get_reference_price(product_name: str) -> dict | None:
@@ -149,9 +142,7 @@ async def get_reference_price(product_name: str) -> dict | None:
     if cached and (time.monotonic() - cached[0]) < _CACHE_TTL:
         return cached[1]
 
-    result = await _fetch_rewe_shop(product_name)
-    if not result:
-        result = await _fetch_rewe_mobile(product_name)
+    result = await _fetch_rewe_html(product_name)
 
     _CACHE[key] = (time.monotonic(), result)
     if result:

@@ -32,104 +32,55 @@ _HEADERS = {
 import re as _re
 
 
-async def _fetch_rewe_html(product_name: str) -> dict | None:
+async def _fetch_via_duckduckgo(product_name: str) -> dict | None:
     """
-    Scrapet die Rewe-Suchseite und extrahiert Preise aus dem eingebetteten JSON.
-    Funktioniert ohne Markt-ID.
+    Sucht Preis/kg über DuckDuckGo HTML-Suche.
+    Parst €/kg-Angaben aus den Suchergebnissen (Rewe, Edeka, etc.).
+    DuckDuckGo blockt keine Server-IPs.
     """
     try:
+        query = f"{product_name} Preis €/kg Rewe OR Edeka OR Kaufland"
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             resp = await client.get(
-                "https://www.rewe.de/suche/",
-                params={"search": product_name},
-                headers={**_HEADERS, "Accept": "text/html,application/xhtml+xml"},
+                "https://html.duckduckgo.com/html/",
+                params={"q": query},
+                headers={**_HEADERS, "Accept": "text/html"},
             )
         if resp.status_code != 200:
+            logger.debug("DuckDuckGo Status %d für '%s'", resp.status_code, product_name)
             return None
 
         text = resp.text
 
-        # Rewe bettet Preisdaten als JSON-LD oder in data-Attributen ein
-        # Versuch 1: application/json script-Tags
-        for script_match in _re.finditer(
-            r'<script[^>]+type=["\']application/json["\'][^>]*>(.*?)</script>',
-            text, _re.DOTALL
-        ):
-            try:
-                blob = json.loads(script_match.group(1))
-                result = _extract_price_from_blob(blob, product_name)
-                if result:
-                    return result
-            except Exception:
-                continue
-
-        # Versuch 2: __NEXT_DATA__ (Next.js)
-        nd_match = _re.search(
-            r'<script id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>', text, _re.DOTALL
-        )
-        if nd_match:
-            try:
-                blob = json.loads(nd_match.group(1))
-                result = _extract_price_from_blob(blob, product_name)
-                if result:
-                    return result
-            except Exception:
-                pass
-
-        # Versuch 3: Preis-Pattern direkt im HTML (€/kg oder €/100g)
-        # Sucht z.B. "2,49 €/kg" oder "(1,99 €/100g)"
-        kg_matches = _re.findall(r'(\d+[,\.]\d+)\s*€\s*/\s*(?:1\s*)?kg', text, _re.IGNORECASE)
-        if kg_matches:
-            # Günstigsten Preis nehmen (erster plausibler Wert)
-            prices = []
-            for m in kg_matches[:10]:
+        # €/kg-Pattern aus Suchergebnissen extrahieren
+        # Matches: "1,99 €/kg", "2.49€/kg", "(3,50 € / kg)"
+        patterns = [
+            r'(\d+)[,\.](\d+)\s*€\s*/\s*(?:1\s*)?kg',
+            r'(\d+)[,\.](\d+)\s*Euro\s*/\s*kg',
+        ]
+        prices = []
+        for pattern in patterns:
+            for m in _re.finditer(pattern, text, _re.IGNORECASE):
                 try:
-                    prices.append(float(m.replace(",", ".")))
-                except ValueError:
+                    val = float(f"{m.group(1)}.{m.group(2)}")
+                    if 0.30 < val < 800:
+                        prices.append(val)
+                except (ValueError, IndexError):
                     pass
-            if prices:
-                price = min(p for p in prices if 0.5 < p < 500)
-                if price:
-                    logger.info("Rewe HTML-Preis/kg für '%s': %.2f", product_name, price)
-                    return {"price_per_kg": price, "name": product_name, "source": "Rewe"}
 
-        return None
+        if not prices:
+            logger.debug("DuckDuckGo: kein €/kg-Preis für '%s'", product_name)
+            return None
+
+        # Medianen Preis nehmen (robuster gegen Ausreißer)
+        prices.sort()
+        median = prices[len(prices) // 2]
+        logger.info("DuckDuckGo Preis/kg für '%s': %.2f €/kg (%d Treffer)", product_name, median, len(prices))
+        return {"price_per_kg": median, "name": product_name, "source": "Marktvergleich"}
 
     except Exception as e:
-        logger.debug("Rewe-HTML-Scraping Fehler für '%s': %s", product_name, e)
+        logger.debug("DuckDuckGo Fehler für '%s': %s", product_name, e)
         return None
-
-
-def _extract_price_from_blob(blob: dict | list, product_name: str) -> dict | None:
-    """Durchsucht rekursiv ein JSON-Objekt nach Preis/kg-Feldern."""
-    if isinstance(blob, list):
-        for item in blob[:20]:
-            result = _extract_price_from_blob(item, product_name)
-            if result:
-                return result
-        return None
-    if not isinstance(blob, dict):
-        return None
-
-    # Typische Rewe-Felder für Preis/kg
-    for key in ("grammagePrice", "pricePerUnit", "unitPrice", "basePrice"):
-        val = blob.get(key)
-        if val and isinstance(val, (int, float)) and 0.5 < val < 500:
-            name = blob.get("name") or blob.get("productName") or product_name
-            return {"price_per_kg": float(val), "name": name, "source": "Rewe"}
-        if isinstance(val, dict):
-            inner = val.get("value") or val.get("amount")
-            if inner and isinstance(inner, (int, float)) and 0.5 < float(inner) < 500:
-                name = blob.get("name") or blob.get("productName") or product_name
-                return {"price_per_kg": float(inner), "name": name, "source": "Rewe"}
-
-    # Rekursiv in verschachtelte Dicts
-    for v in blob.values():
-        if isinstance(v, (dict, list)):
-            result = _extract_price_from_blob(v, product_name)
-            if result:
-                return result
-    return None
 
 
 async def get_reference_price(product_name: str) -> dict | None:
@@ -142,7 +93,7 @@ async def get_reference_price(product_name: str) -> dict | None:
     if cached and (time.monotonic() - cached[0]) < _CACHE_TTL:
         return cached[1]
 
-    result = await _fetch_rewe_html(product_name)
+    result = await _fetch_via_duckduckgo(product_name)
 
     _CACHE[key] = (time.monotonic(), result)
     if result:

@@ -48,43 +48,60 @@ async def _fetch_rewe_shop(product_name: str) -> dict | None:
             return None
         data = resp.json()
 
-        # Produkte liegen in _embedded.products (HAL-Format)
-        products = data.get("_embedded", {}).get("products", [])
+        embedded = data.get("_embedded", {})
+        logger.info("Rewe Top-_embedded Keys für '%s': %s", product_name, list(embedded.keys()))
+
+        # Produkte
+        products = embedded.get("products", [])
         if not products:
             return None
 
-        p = products[0]
-        name = p.get("productName") or p.get("name", "")
-        p_embedded = p.get("_embedded", {})
-        logger.info("Rewe p._embedded Keys für '%s': %s", product_name, list(p_embedded.keys()))
+        # Artikel mit Preis suchen – entweder pro Produkt oder top-level
+        articles = embedded.get("articles", [])
+        if not articles:
+            for p in products:
+                articles = p.get("_embedded", {}).get("articles", [])
+                if articles:
+                    break
 
-        # Preis steckt im _embedded des Produkts → articles[0].listing
-        articles = p_embedded.get("articles", [])
-        logger.info("Rewe articles Typ=%s Len=%s", type(articles).__name__, len(articles) if isinstance(articles, (list, dict)) else "?")
+        logger.info("Rewe articles gesamt: %d", len(articles))
         if not articles:
             return None
 
-        article = articles[0]
-        logger.info("Rewe article Keys: %s", list(article.keys())[:12])
-        listing = article.get("listing", article)  # Fallback: article selbst
-        logger.info("Rewe listing Keys: %s", list(listing.keys())[:12])
+        # Ersten Artikel mit Preis/kg nehmen
+        for article in articles:
+            logger.info("Rewe article Keys: %s", list(article.keys())[:12])
+            # Preis/kg direkt
+            price_per_kg = (
+                article.get("grammagePrice")
+                or article.get("pricePerUnit")
+                or article.get("unitPrice")
+            )
+            # Nested unter listing oder price
+            if not price_per_kg:
+                listing = article.get("listing", {})
+                price_per_kg = (
+                    listing.get("grammagePrice", {}).get("value")
+                    or listing.get("pricePerUnit")
+                )
+            if not price_per_kg:
+                price_obj = article.get("price", {})
+                if isinstance(price_obj, dict):
+                    price_per_kg = price_obj.get("grammage") or price_obj.get("pricePerUnit")
 
-        # Preis/kg aus grammagePrice
-        grammage = listing.get("grammagePrice", {})
-        price_per_kg = grammage.get("value")
+            name = (
+                article.get("productName")
+                or article.get("name")
+                or products[0].get("productName", product_name)
+            )
+            if price_per_kg:
+                val = float(price_per_kg)
+                if val > 500:
+                    val /= 100
+                logger.info("Rewe Preis/kg für '%s': %.2f", product_name, val)
+                return {"price_per_kg": val, "name": name, "source": "Rewe"}
 
-        # Fallback: regulären Preis nehmen
-        if not price_per_kg:
-            regular = listing.get("price", {})
-            price_per_kg = regular.get("value") if isinstance(regular, dict) else regular
-
-        if price_per_kg:
-            val = float(price_per_kg)
-            if val > 500:
-                val /= 100
-            return {"price_per_kg": val, "name": name, "source": "Rewe"}
-
-        logger.info("Rewe: kein Preis gefunden für '%s'", product_name)
+        logger.info("Rewe: kein Preis/kg in keinem Artikel für '%s'", product_name)
         return None
 
     except Exception as e:

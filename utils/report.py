@@ -24,6 +24,7 @@ def format_report(
     total: float,
     recipe_names: list[str] | None = None,
     already_in_cart: list[dict] | None = None,
+    price_warnings: dict[str, dict] | None = None,
 ) -> str:
     """
     Erstellt den Telegram-Report im vorgegebenen Format.
@@ -83,6 +84,20 @@ def format_report(
             unit = item.get("unit", "")
             qty_str = f" ({qty} {unit})" if qty else ""
             lines.append(f"  · {name}{qty_str}")
+
+    # Preisvergleich-Warnungen
+    if price_warnings:
+        lines.append("")
+        lines.append(f"📊 *Preisvergleich (Rewe):*")
+        for product_name, w in price_warnings.items():
+            boeck = w["boeck_price_per_kg"]
+            ref = w["ref_price_per_kg"]
+            diff = w["diff_pct"] * 100
+            lines.append(
+                f"  · *{product_name}* – {boeck:.2f} €/kg bei Böck "
+                f"vs. {ref:.2f} €/kg bei {w['source']} "
+                f"(+{diff:.0f}%)"
+            )
 
     # Warenkorb-Link
     if cart_url:

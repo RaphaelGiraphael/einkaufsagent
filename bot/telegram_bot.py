@@ -710,6 +710,7 @@ async def _process_recipe(
             cart_url=result.get("cart_url", ""),
             total=result.get("total", 0.0),
             already_in_cart=result.get("already_in_cart", []),
+            price_warnings=result.get("price_warnings", {}),
         )
 
         # 6. Bestellung in DB speichern + cart_state verknüpfen

@@ -429,6 +429,22 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
         elif already_in_cart or cart_state:
             cart_url = f"{BASE_URL}/checkout/cart"
 
+    # ── Phase 5: Preisvergleich parallel (außerhalb Browser-Session) ──────────
+    from shop.price_check import check_price_markup  # noqa: PLC0415
+    price_warnings: dict[str, dict] = {}
+    items_with_kg_price = [
+        item for item in actually_added if item.get("price_per_kg")
+    ]
+    if items_with_kg_price:
+        pw_tasks = [
+            check_price_markup(item["name"], item["price_per_kg"])
+            for item in items_with_kg_price
+        ]
+        pw_results = await asyncio.gather(*pw_tasks, return_exceptions=True)
+        for item, warning in zip(items_with_kg_price, pw_results):
+            if isinstance(warning, dict):
+                price_warnings[item["name"]] = warning
+
     return {
         "cart_items": actually_added,
         "not_found": not_found,
@@ -438,6 +454,7 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
         "uncertain": uncertain,
         "cart_url": cart_url,
         "total": total,
+        "price_warnings": price_warnings,
     }
 
 

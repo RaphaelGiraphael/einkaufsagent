@@ -12,8 +12,6 @@ Ergebnisse werden 24h in-memory gecacht.
 import logging
 import time
 
-import httpx
-
 logger = logging.getLogger(__name__)
 
 THRESHOLD = 0.10  # Böck muss mehr als 10% teurer sein um zu warnen
@@ -21,65 +19,55 @@ THRESHOLD = 0.10  # Böck muss mehr als 10% teurer sein um zu warnen
 _CACHE: dict[str, tuple[float, dict | None]] = {}  # term → (timestamp, result)
 _CACHE_TTL = 1_209_600.0  # 14 Tage
 
-_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json",
-    "Accept-Language": "de-DE,de;q=0.9",
-}
-
 
 import re as _re
+import anthropic as _anthropic
 
 
-async def _fetch_via_duckduckgo(product_name: str) -> dict | None:
+async def _fetch_via_claude_search(product_name: str) -> dict | None:
     """
-    Sucht Preis/kg über DuckDuckGo HTML-Suche.
-    Parst €/kg-Angaben aus den Suchergebnissen (Rewe, Edeka, etc.).
-    DuckDuckGo blockt keine Server-IPs.
+    Nutzt Claude Web Search um Referenzpreise zu finden.
+    Läuft über Anthropics Server → kein IP-Block durch Supermärkte.
     """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
     try:
-        query = f"{product_name} Preis €/kg Rewe OR Edeka OR Kaufland"
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            resp = await client.get(
-                "https://html.duckduckgo.com/html/",
-                params={"q": query},
-                headers={**_HEADERS, "Accept": "text/html"},
-            )
-        if resp.status_code != 200:
-            logger.debug("DuckDuckGo Status %d für '%s'", resp.status_code, product_name)
-            return None
+        client = _anthropic.AsyncAnthropic(api_key=api_key)
+        message = await client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=200,
+            tools=[{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 2,
+            }],
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Wie viel kostet '{product_name}' pro kg bei deutschen Supermärkten "
+                    f"(Rewe, Edeka, Kaufland, Aldi, Lidl)? "
+                    f"Antworte NUR mit einer Zahl in Euro, z.B. '2.49'. "
+                    f"Das ist der typische Marktpreis pro kg. Kein Text, nur die Zahl."
+                ),
+            }],
+        )
 
-        text = resp.text
-
-        # €/kg-Pattern aus Suchergebnissen extrahieren
-        # Matches: "1,99 €/kg", "2.49€/kg", "(3,50 € / kg)"
-        patterns = [
-            r'(\d+)[,\.](\d+)\s*€\s*/\s*(?:1\s*)?kg',
-            r'(\d+)[,\.](\d+)\s*Euro\s*/\s*kg',
-        ]
-        prices = []
-        for pattern in patterns:
-            for m in _re.finditer(pattern, text, _re.IGNORECASE):
-                try:
+        # Antwort extrahieren
+        for block in message.content:
+            if hasattr(block, "text"):
+                raw = block.text.strip()
+                # Zahl aus Antwort parsen
+                m = _re.search(r'(\d+)[,\.](\d+)', raw)
+                if m:
                     val = float(f"{m.group(1)}.{m.group(2)}")
                     if 0.30 < val < 800:
-                        prices.append(val)
-                except (ValueError, IndexError):
-                    pass
+                        logger.info("Claude-Search Preis/kg für '%s': %.2f", product_name, val)
+                        return {"price_per_kg": val, "name": product_name, "source": "Marktvergleich"}
 
-        if not prices:
-            logger.debug("DuckDuckGo: kein €/kg-Preis für '%s'", product_name)
-            return None
-
-        # Medianen Preis nehmen (robuster gegen Ausreißer)
-        prices.sort()
-        median = prices[len(prices) // 2]
-        logger.info("DuckDuckGo Preis/kg für '%s': %.2f €/kg (%d Treffer)", product_name, median, len(prices))
-        return {"price_per_kg": median, "name": product_name, "source": "Marktvergleich"}
-
+        return None
     except Exception as e:
-        logger.debug("DuckDuckGo Fehler für '%s': %s", product_name, e)
+        logger.debug("Claude-Search Fehler für '%s': %s", product_name, e)
         return None
 
 
@@ -93,7 +81,7 @@ async def get_reference_price(product_name: str) -> dict | None:
     if cached and (time.monotonic() - cached[0]) < _CACHE_TTL:
         return cached[1]
 
-    result = await _fetch_via_duckduckgo(product_name)
+    result = await _fetch_via_claude_search(product_name)
 
     _CACHE[key] = (time.monotonic(), result)
     if result:

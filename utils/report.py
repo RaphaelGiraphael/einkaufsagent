@@ -88,15 +88,18 @@ def format_report(
     # Preisvergleich-Warnungen
     if price_warnings:
         lines.append("")
-        lines.append(f"📊 *Preisvergleich (Rewe):*")
+        lines.append("📊 *Preisvergleich:*")
         for product_name, w in price_warnings.items():
             boeck = w["boeck_price_per_kg"]
             ref = w["ref_price_per_kg"]
             diff = w["diff_pct"] * 100
+            ref_product = w.get("ref_product", "")
+            source = w.get("source", "Supermarkt")
+            ref_str = f" _{ref_product}_" if ref_product and ref_product.lower() != product_name.lower() else ""
             lines.append(
-                f"  · *{product_name}* – {boeck:.2f} €/kg bei Böck "
-                f"vs. {ref:.2f} €/kg bei {w['source']} "
-                f"(+{diff:.0f}%)"
+                f"  · *{product_name}* {boeck:.2f} €/kg "
+                f"vs. {ref:.2f} €/kg bei {source}{ref_str} "
+                f"(+{diff:.0f}% teurer)"
             )
 
     # Warenkorb-Link

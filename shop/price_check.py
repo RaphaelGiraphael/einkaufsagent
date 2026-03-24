@@ -29,6 +29,7 @@ async def _fetch_via_claude_search(product_name: str) -> dict | None:
     """
     Nutzt Claude Web Search um Referenzpreise zu finden.
     Läuft über Anthropics Server → kein IP-Block durch Supermärkte.
+    Claude gibt Preis + gefundenes Vergleichsprodukt zurück.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -37,7 +38,7 @@ async def _fetch_via_claude_search(product_name: str) -> dict | None:
         client = _anthropic.AsyncAnthropic(api_key=api_key)
         message = await client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=200,
+            max_tokens=300,
             tools=[{
                 "type": "web_search_20250305",
                 "name": "web_search",
@@ -46,25 +47,45 @@ async def _fetch_via_claude_search(product_name: str) -> dict | None:
             messages=[{
                 "role": "user",
                 "content": (
-                    f"Wie viel kostet '{product_name}' pro kg bei deutschen Supermärkten "
-                    f"(Rewe, Edeka, Kaufland, Aldi, Lidl)? "
-                    f"Antworte NUR mit einer Zahl in Euro, z.B. '2.49'. "
-                    f"Das ist der typische Marktpreis pro kg. Kein Text, nur die Zahl."
+                    f"Suche den aktuellen Preis pro kg für '{product_name}' bei einem deutschen "
+                    f"Supermarkt (Rewe, Edeka, Kaufland, Aldi oder Lidl). "
+                    f"Vergleiche möglichst das gleiche oder sehr ähnliche Produkt (gleiche Qualität, "
+                    f"Bio wenn Bio, gleicher Verarbeitungsgrad). "
+                    f"Antworte in genau diesem Format ohne weiteren Text:\n"
+                    f"PREIS: <zahl in Euro pro kg>\n"
+                    f"PRODUKT: <exakter Produktname den du gefunden hast>\n"
+                    f"MARKT: <Marktname>\n"
+                    f"Falls kein vergleichbares Produkt gefunden: antworte nur mit 'KEIN TREFFER'"
                 ),
             }],
         )
 
         # Antwort extrahieren
         for block in message.content:
-            if hasattr(block, "text"):
-                raw = block.text.strip()
-                # Zahl aus Antwort parsen
-                m = _re.search(r'(\d+)[,\.](\d+)', raw)
-                if m:
-                    val = float(f"{m.group(1)}.{m.group(2)}")
-                    if 0.30 < val < 800:
-                        logger.info("Claude-Search Preis/kg für '%s': %.2f", product_name, val)
-                        return {"price_per_kg": val, "name": product_name, "source": "Marktvergleich"}
+            if not hasattr(block, "text"):
+                continue
+            raw = block.text.strip()
+            if "KEIN TREFFER" in raw:
+                return None
+
+            price_m = _re.search(r'PREIS:\s*(\d+)[,\.](\d+)', raw)
+            product_m = _re.search(r'PRODUKT:\s*(.+)', raw)
+            market_m = _re.search(r'MARKT:\s*(.+)', raw)
+
+            if price_m:
+                val = float(f"{price_m.group(1)}.{price_m.group(2)}")
+                if 0.30 < val < 800:
+                    found_product = product_m.group(1).strip() if product_m else product_name
+                    found_market = market_m.group(1).strip() if market_m else "Supermarkt"
+                    logger.info(
+                        "Preisvergleich '%s': %.2f €/kg bei %s ('%s')",
+                        product_name, val, found_market, found_product,
+                    )
+                    return {
+                        "price_per_kg": val,
+                        "name": found_product,
+                        "source": found_market,
+                    }
 
         return None
     except Exception as e:

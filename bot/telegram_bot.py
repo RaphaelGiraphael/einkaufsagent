@@ -661,47 +661,57 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def _send_price_warnings(update: Update, cart_items: list[dict]) -> None:
     """Läuft im Hintergrund: Preisvergleich via Claude Web Search, dann Folgenachricht."""
-    import asyncio as _asyncio
-    from shop.price_check import check_price_markup
-
-    # Artikel mit Preis (price_per_kg ODER konkretem Stückpreis berechenbar)
-    candidates = [i for i in cart_items if i.get("price_per_kg") or i.get("price")]
-    if not candidates:
-        return
-
-    tasks = [
-        check_price_markup(i["name"], i.get("price_per_kg"), boeck_item=i)
-        for i in candidates
-    ]
-    results = await _asyncio.gather(*tasks, return_exceptions=True)
-
-    warnings = {
-        item["name"]: w
-        for item, w in zip(candidates, results)
-        if isinstance(w, dict)
-    }
-    if not warnings:
-        return
-
-    # Nur den Preisvergleich-Block ausgeben
-    lines = ["📊 *Preisvergleich:*"]
-    for product_name, w in warnings.items():
-        boeck = w["boeck_price"]
-        ref = w["ref_price"]
-        unit = w.get("unit", "kg")
-        diff = w["diff_pct"] * 100
-        ref_product = w.get("ref_product", "")
-        source = w.get("source", "Supermarkt")
-        ref_str = f"\n    ↳ _{ref_product}_" if ref_product and ref_product.lower() != product_name.lower() else ""
-        lines.append(
-            f"  · *{product_name}*: {boeck:.2f} €/{unit} bei Böck "
-            f"vs. {ref:.2f} €/{unit} bei {source} (+{diff:.0f}%){ref_str}"
-        )
-
     try:
+        import asyncio as _asyncio
+        from shop.price_check import check_price_markup
+
+        logger.info("Preisvergleich gestartet für %d Artikel", len(cart_items))
+
+        # Artikel mit Preis (price_per_kg ODER konkretem Stückpreis berechenbar)
+        candidates = [i for i in cart_items if i.get("price_per_kg") or i.get("price")]
+        logger.info("Preisvergleich: %d Kandidaten", len(candidates))
+        if not candidates:
+            return
+
+        tasks = [
+            check_price_markup(i["name"], i.get("price_per_kg"), boeck_item=i)
+            for i in candidates
+        ]
+        results = await _asyncio.gather(*tasks, return_exceptions=True)
+
+        for item, res in zip(candidates, results):
+            if isinstance(res, Exception):
+                logger.warning("Preisvergleich Fehler für '%s': %s", item["name"], res)
+            else:
+                logger.info("Preisvergleich '%s': %s", item["name"], res)
+
+        warnings = {
+            item["name"]: w
+            for item, w in zip(candidates, results)
+            if isinstance(w, dict)
+        }
+        if not warnings:
+            logger.info("Preisvergleich: keine Warnungen (alle unter Schwelle oder kein Treffer)")
+            return
+
+        # Nur den Preisvergleich-Block ausgeben
+        lines = ["📊 *Preisvergleich:*"]
+        for product_name, w in warnings.items():
+            boeck = w["boeck_price"]
+            ref = w["ref_price"]
+            unit = w.get("unit", "kg")
+            diff = w["diff_pct"] * 100
+            ref_product = w.get("ref_product", "")
+            source = w.get("source", "Supermarkt")
+            ref_str = f"\n    ↳ _{ref_product}_" if ref_product and ref_product.lower() != product_name.lower() else ""
+            lines.append(
+                f"  · *{product_name}*: {boeck:.2f} €/{unit} bei Böck "
+                f"vs. {ref:.2f} €/{unit} bei {source} (+{diff:.0f}%){ref_str}"
+            )
+
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
     except Exception as e:
-        logger.warning("Preisvergleich-Nachricht fehlgeschlagen: %s", e)
+        logger.exception("_send_price_warnings Fehler: %s", e)
 
 
 async def _process_recipe(

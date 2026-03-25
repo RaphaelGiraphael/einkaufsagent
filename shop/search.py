@@ -380,6 +380,13 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
         }
         cart_product_urls = {cs["product_url"] for cs in cart_state if cs.get("product_url")}
 
+        logger.info(
+            "[DEBUG] cart_state (%d Einträge): %s",
+            len(cart_state),
+            [(cs.get("ingredient_name"), cs.get("quantity"), cs.get("unit")) for cs in cart_state],
+        )
+        logger.info("[DEBUG] interim_stock: %s", interim)
+
         # ── Phase 1: Entscheiden was bestellt werden muss ────────────────────
         search_queue = []  # (ingredient, search_ingredient, is_cnt, needed_raw)
 
@@ -409,7 +416,13 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                         else 0.0
                     )
                     remaining_base = max(0.0, needed_base - available_base)
+                    logger.info(
+                        "[DEBUG] '%s' g/ml: needed=%.0f%s avail=%.0f%s remain=%.0f%s cart_stock=%s",
+                        ingredient["name"], needed_base, needed_base_unit,
+                        available_base, needed_base_unit, remaining_base, needed_base_unit, stock,
+                    )
                     if remaining_base <= 0:
+                        logger.info("[DEBUG] '%s' → already_in_cart (g/ml gedeckt)", ingredient["name"])
                         already_in_cart.append({**ingredient})
                         continue
                     remaining_orig = remaining_base / orig_factor
@@ -500,13 +513,18 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                     best.get("unit", ""),
                 )
 
+                # Echte Paketgröße bestimmen (für cart_state-Tracking)
+                pkg_base, pkg_bu = _parse_package_base_qty(best.get("unit", ""))
+
                 cart_items.append({
                     **ingredient, **best,
                     "quantity": search_ingredient.get("quantity", needed_raw),
                     "ingredient_name": ingredient["name"],
-                    # Rezept-Einheit für cart_state (g/ml statt Produkteinheit)
                     "ingredient_qty": search_ingredient.get("quantity", needed_raw),
                     "ingredient_unit": ingredient.get("unit", ""),
+                    # Physische Paketgröße für cart_state (damit nächstes Rezept korrekt trackt)
+                    "package_qty": pkg_base,
+                    "package_base_unit": pkg_bu,
                     **({"size_hint": size_hint} if size_hint else {}),
                 })
 

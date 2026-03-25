@@ -129,6 +129,18 @@ def _save_to_cart_state(items: list[dict]) -> None:
     try:
         with conn:
             for item in items:
+                # Echte Paketgröße speichern wenn bekannt (g/ml),
+                # sonst Rezept-Menge als Fallback.
+                # Paketgröße: physische Menge im Warenkorb – sorgt dafür dass
+                # nächstes Rezept korrekt "wie viel fehlt noch" berechnet.
+                pkg_qty = item.get("package_qty")
+                pkg_bu = item.get("package_base_unit")
+                if pkg_qty and pkg_bu:
+                    stored_qty = pkg_qty
+                    stored_unit = pkg_bu
+                else:
+                    stored_qty = item.get("ingredient_qty") or item.get("quantity") or 1
+                    stored_unit = item.get("ingredient_unit") or item.get("unit") or "Stk"
                 conn.execute(
                     "INSERT INTO cart_state "
                     "(product_name, product_url, ingredient_name, quantity, unit) "
@@ -137,8 +149,8 @@ def _save_to_cart_state(items: list[dict]) -> None:
                         item.get("name", ""),
                         item.get("url", ""),
                         item.get("ingredient_name") or item.get("name", ""),
-                        item.get("ingredient_qty") or item.get("quantity") or 1,
-                        item.get("ingredient_unit") or item.get("unit") or "Stk",
+                        stored_qty,
+                        stored_unit,
                     ),
                 )
     except Exception as e:

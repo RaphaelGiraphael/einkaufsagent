@@ -878,7 +878,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("rein", cmd_rein))
     app.add_handler(CommandHandler("leeren", cmd_leeren))
     app.add_handler(CommandHandler("warenkorb", cmd_warenkorb))
-    app.add_handler(CallbackQueryHandler(handle_cart_callback, pattern=r"^cart_(add|skip)_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_cart_callback, pattern=r"^cart_(add|skip)_[0-9a-f]+$"))
     app.add_handler(CallbackQueryHandler(handle_inventory_callback, pattern=r"^inv_(add|sub|del|noop)_?\d*$"))
     app.add_handler(CallbackQueryHandler(handle_new_inv_callback,   pattern=r"^invn_"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))

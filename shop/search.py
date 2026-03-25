@@ -442,13 +442,16 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                         continue
                     search_ingredient = ingredient
 
-            # ── Zählbar (Stück, Zehe, Bund …): Mengen-Vergleich ─────────────
+            # ── Zählbar (Stück, Zehe, Bund …): nur Inventar zählt ───────────
+            # Cart-State wird bewusst NICHT angerechnet: jedes Rezept bekommt
+            # eigene Stück-Artikel (Recipe 1 und 2 brauchen je 1 Zucchini → 2 bestellen).
+            # Mengen-Deduplication innerhalb eines Rezepts übernimmt merge_ingredients.
             else:
                 needed_qty, needed_base = _to_base(needed_raw, unit)
                 orig_factor = _UNIT_MULTIPLIERS.get(unit.lower().strip().rstrip("."), 1.0)
                 stock = interim.get(name_lower, {})
                 if stock.get("base_unit", needed_base) == needed_base:
-                    available_base = stock.get("qty", 0.0)
+                    available_base = stock.get("from_inv", 0.0)  # nur Inventar, nicht Cart
                 else:
                     available_base = 0.0
                 remaining_base = max(0.0, needed_qty - available_base)

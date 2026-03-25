@@ -783,11 +783,16 @@ async def _process_recipe(
         from shop.cart import link_cart_state_to_order
         link_cart_state_to_order(order_id)
 
-        await update.message.reply_text(report, parse_mode="Markdown")
+        logger.warning("DEBUG STEP1: sende Report")
+        try:
+            await update.message.reply_text(report, parse_mode="Markdown")
+        except Exception as md_err:
+            logger.warning("DEBUG Markdown-Fehler: %s – sende ohne Markdown", md_err)
+            await update.message.reply_text(report)
+        logger.warning("DEBUG STEP2: Report gesendet, starte Preisvergleich")
 
         # 7. Preisvergleich (synchron zum Debuggen)
         cart_items = result.get("cart_items", [])
-        logger.warning("DEBUG Preisvergleich: %d Artikel", len(cart_items))
         await _send_price_warnings(update, cart_items)
 
         # Unsichere Artikel: Inline-Buttons zur Bestätigung

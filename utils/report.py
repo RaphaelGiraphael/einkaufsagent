@@ -42,6 +42,8 @@ def format_report(
             price = item.get("price")
             price_str = f" – {str(price).replace('.', ',')} €" if price else ""
             lines.append(f"  · {name}{price_str}")
+            if item.get("size_hint"):
+                lines.append(f"    ⚠️ _{item['size_hint']}_")
     else:
         lines.append("⚠️ *Kein Artikel konnte zum Warenkorb hinzugefügt werden*")
 

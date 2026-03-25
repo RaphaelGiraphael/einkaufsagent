@@ -284,6 +284,56 @@ def _build_interim_stock(
     return stock
 
 
+def _parse_package_base_qty(product_unit: str) -> tuple[float | None, str | None]:
+    """
+    Parst eine Produkteinheit wie '180 g', '500g', '1 kg', '250 ml'
+    und gibt (menge_in_basiseinheit, basiseinheit) zurück.
+    """
+    if not product_unit:
+        return None, None
+    m = re.search(r"(\d+(?:[,.]\d+)?)\s*(g|kg|ml|l)\b", product_unit, re.IGNORECASE)
+    if not m:
+        return None, None
+    val = float(m.group(1).replace(",", "."))
+    u = m.group(2).lower()
+    if u == "kg":
+        return val * 1000, "g"
+    if u == "l":
+        return val * 1000, "ml"
+    return val, u  # g or ml unverändert
+
+
+def _check_package_size_hint(
+    needed_qty: float,
+    ing_unit: str,
+    product_unit: str,
+    tolerance_low: float = 0.70,
+) -> str | None:
+    """
+    Gibt einen Hinweis zurück, wenn die Packungsgröße kleiner als die benötigte Menge ist
+    (aber mindestens tolerance_low davon, also z.B. ≥70%).
+    """
+    if not product_unit:
+        return None
+    pkg_base, pkg_bu = _parse_package_base_qty(product_unit)
+    if pkg_base is None:
+        return None
+    needed_base, needed_bu = _to_base(needed_qty, ing_unit)
+    if needed_bu != pkg_bu:
+        return None
+    if pkg_base >= needed_base * 0.99:  # Packung reicht aus (≥99%)
+        return None
+    if pkg_base < needed_base * tolerance_low:  # Zu klein – kein sinnvoller Hinweis
+        return None
+    # Packung ist 70–99% der benötigten Menge → Hinweis ausgeben
+    def _fmt(qty: float, unit: str) -> str:
+        return f"{int(round(qty))} {unit}"
+    return (
+        f"Hinweis: {_fmt(needed_base, needed_bu)} benötigt, "
+        f"kleinste Packung hat {_fmt(pkg_base, pkg_bu)}"
+    )
+
+
 async def find_and_fill_cart(ingredients: list[dict]) -> dict:
     """
     Vollständige Pipeline: Interims-Vorratsliste aus Inventar + Warenkorb aufbauen,
@@ -436,9 +486,20 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                 uncertain.append({**ingredient, **best, "ingredient_name": ingredient["name"]})
             else:
                 # Für nicht-zählbar: Produkt-URL als Fallback-Presence-Check
-                if not is_cnt and best.get("url", "") in cart_product_urls:
+                # NUR für Presence-Check-Einheiten (EL, TL, Prise …), NICHT für g/ml
+                # (bei g/ml haben wir die Restmenge bereits berechnet)
+                _, ing_base_unit = _to_base(1.0, ingredient.get("unit", ""))
+                if not is_cnt and ing_base_unit not in {"g", "ml"} and best.get("url", "") in cart_product_urls:
                     already_in_cart.append({**ingredient, **best})
                     continue
+
+                # Paketgröße-Hinweis: wenn Packung kleiner als benötigte Menge
+                size_hint = _check_package_size_hint(
+                    search_ingredient.get("quantity", needed_raw),
+                    ingredient.get("unit", ""),
+                    best.get("unit", ""),
+                )
+
                 cart_items.append({
                     **ingredient, **best,
                     "quantity": search_ingredient.get("quantity", needed_raw),
@@ -446,6 +507,7 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                     # Rezept-Einheit für cart_state (g/ml statt Produkteinheit)
                     "ingredient_qty": search_ingredient.get("quantity", needed_raw),
                     "ingredient_unit": ingredient.get("unit", ""),
+                    **({"size_hint": size_hint} if size_hint else {}),
                 })
 
         # Warenkorb befüllen – nur tatsächlich hinzugefügte Artikel zählen

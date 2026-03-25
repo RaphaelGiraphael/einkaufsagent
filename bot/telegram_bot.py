@@ -785,12 +785,7 @@ async def _process_recipe(
 
         await update.message.reply_text(report, parse_mode="Markdown")
 
-        # 7. Preisvergleich – neu hinzugefügte + bereits im Warenkorb
-        all_cart_items = result.get("cart_items", []) + result.get("already_in_cart", [])
-        context.application.create_task(
-            _send_price_warnings(update, all_cart_items),
-            update=update,
-        )
+        # 7. Preisvergleich – deaktiviert
 
         # Unsichere Artikel: Inline-Buttons zur Bestätigung
         uncertain = result.get("uncertain", [])

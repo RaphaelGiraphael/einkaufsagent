@@ -8,6 +8,9 @@ import logging
 import os
 import uuid
 
+# Hält Referenzen auf Hintergrund-Tasks damit Python sie nicht vorzeitig GC'd
+_background_tasks: set = set()
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -785,9 +788,9 @@ async def _process_recipe(
         # 7. Preisvergleich im Hintergrund – kommt als separate Folgenachricht
         cart_items = result.get("cart_items", [])
         if cart_items:
-            asyncio.create_task(
-                _send_price_warnings(update, cart_items)
-            )
+            task = asyncio.create_task(_send_price_warnings(update, cart_items))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
         # Unsichere Artikel: Inline-Buttons zur Bestätigung
         uncertain = result.get("uncertain", [])

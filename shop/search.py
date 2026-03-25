@@ -345,14 +345,39 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                 used_from_inv = min(inv_qty_orig, needed_raw)
                 from_inventory.append({**ingredient, "quantity": used_from_inv})
 
-            # ── Nicht-zählbar (Öl, Gewürze, g/ml …): Presence-Check ──────────
+            # ── Nicht-zählbar: g/ml → Mengenvergleich; Rest → Presence-Check ──
             if not is_cnt:
-                if inv_qty_orig > 0:
-                    continue  # Inventar reicht aus
-                if name_lower in cart_ingredient_names:
-                    already_in_cart.append({**ingredient})
-                    continue
-                search_ingredient = ingredient
+                _, needed_base_unit = _to_base(1.0, unit)
+                if needed_base_unit in {"g", "ml"}:
+                    # Gewicht/Volumen: wie zählbar – wie viel fehlt noch?
+                    orig_factor = _UNIT_MULTIPLIERS.get(unit.lower().strip().rstrip("."), 1.0)
+                    needed_base = needed_raw * orig_factor
+                    stock = interim.get(name_lower, {})
+                    available_base = (
+                        stock.get("qty", 0.0)
+                        if stock.get("base_unit") == needed_base_unit
+                        else 0.0
+                    )
+                    remaining_base = max(0.0, needed_base - available_base)
+                    if remaining_base <= 0:
+                        already_in_cart.append({**ingredient})
+                        continue
+                    remaining_orig = remaining_base / orig_factor
+                    if remaining_orig < needed_raw:
+                        logger.info(
+                            "'%s': %.2f %s gedeckt (Inv+WK), bestelle %.2f %s nach",
+                            ingredient["name"], needed_raw - remaining_orig,
+                            unit, remaining_orig, unit,
+                        )
+                    search_ingredient = {**ingredient, "quantity": remaining_orig}
+                else:
+                    # EL, TL, Prise, Packung …: Presence-Check reicht
+                    if inv_qty_orig > 0:
+                        continue
+                    if name_lower in cart_ingredient_names:
+                        already_in_cart.append({**ingredient})
+                        continue
+                    search_ingredient = ingredient
 
             # ── Zählbar (Stück, Zehe, Bund …): Mengen-Vergleich ─────────────
             else:
@@ -418,6 +443,9 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                     **ingredient, **best,
                     "quantity": search_ingredient.get("quantity", needed_raw),
                     "ingredient_name": ingredient["name"],
+                    # Rezept-Einheit für cart_state (g/ml statt Produkteinheit)
+                    "ingredient_qty": search_ingredient.get("quantity", needed_raw),
+                    "ingredient_unit": ingredient.get("unit", ""),
                 })
 
         # Warenkorb befüllen – nur tatsächlich hinzugefügte Artikel zählen

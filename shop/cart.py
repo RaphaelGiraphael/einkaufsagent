@@ -137,8 +137,8 @@ def _save_to_cart_state(items: list[dict]) -> None:
                         item.get("name", ""),
                         item.get("url", ""),
                         item.get("ingredient_name") or item.get("name", ""),
-                        item.get("quantity") or 1,
-                        item.get("unit") or "Stk",
+                        item.get("ingredient_qty") or item.get("quantity") or 1,
+                        item.get("ingredient_unit") or item.get("unit") or "Stk",
                     ),
                 )
     except Exception as e:

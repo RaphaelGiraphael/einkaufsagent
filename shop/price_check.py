@@ -39,7 +39,8 @@ def _boeck_price_for_unit(
         return None
     price = boeck_item.get("price")
     qty = boeck_item.get("quantity") or 1
-    raw_unit = (boeck_item.get("unit") or "").lower().strip(".")
+    # "10 Stück" → "stück", "6 St." → "st"
+    raw_unit = _re.sub(r'^\d+\s*', '', (boeck_item.get("unit") or "").lower()).strip(".")
     if not price or not qty:
         return None
     if ref_unit == "Stück" and raw_unit in _STUECK_UNITS:
@@ -100,9 +101,8 @@ async def _fetch_via_claude_search(product_name: str) -> dict | None:
             if not hasattr(block, "text"):
                 continue
             raw = block.text.strip()
-            logger.info("Claude-Antwort für '%s': %s", product_name, raw[:300])
             if "KEIN TREFFER" in raw:
-                logger.info("Kein Treffer für '%s'", product_name)
+                logger.debug("Kein Treffer für '%s'", product_name)
                 return None
 
             # Matches: "PREIS: 6.54", "PREIS: **6,54**", "PREIS: 0,39"
@@ -170,7 +170,6 @@ async def check_price_markup(
     """
     ref = await get_reference_price(product_name)
     if not ref or not ref.get("price"):
-        logger.info("check_price_markup '%s': kein Referenzpreis", product_name)
         return None
 
     ref_price = ref["price"]
@@ -179,12 +178,6 @@ async def check_price_markup(
         return None
 
     boeck_price = _boeck_price_for_unit(ref_unit, boeck_price_per_kg, boeck_item)
-    logger.info(
-        "check_price_markup '%s': ref=%.2f €/%s, boeck_item=%s, boeck_price=%s",
-        product_name, ref_price, ref_unit,
-        {k: boeck_item.get(k) for k in ("price", "price_per_kg", "quantity", "unit")} if boeck_item else None,
-        boeck_price,
-    )
     if not boeck_price or boeck_price <= 0:
         return None
 

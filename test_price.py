@@ -1,32 +1,31 @@
-"""
-Standalone-Test für Preisvergleich via Claude Web Search.
-Ausführen: python test_price.py "Schafsmilch Feta 45%" "Bio Eier"
-"""
-import asyncio
-import logging
-import os
-import sys
-
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-
+"""Debug: zeigt rohe Claude-Antwort"""
+import asyncio, logging, os, sys
+logging.basicConfig(level=logging.DEBUG, format="%(name)s: %(message)s")
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, os.path.dirname(__file__))
 
-from shop.price_check import get_reference_price, check_price_markup
-
+import anthropic
 
 async def main():
-    terms = sys.argv[1:] if len(sys.argv) > 1 else ["Bio Eier", "Schafsmilch Feta 45%"]
-    for term in terms:
-        print(f"\n🔍 {term}")
-        ref = await get_reference_price(term)
-        if ref:
-            print(f"  ✅ {ref['price_per_kg']:.2f} €/kg bei {ref['source']} → '{ref['name']}'")
-            warning = await check_price_markup(term, ref["price_per_kg"] * 1.2)
-            if warning:
-                print(f"  ⚠️  Bei +20% wäre Warnung: +{warning['diff_pct']*100:.0f}%")
-        else:
-            print(f"  ❌ Kein Referenzpreis gefunden")
+    term = sys.argv[1] if len(sys.argv) > 1 else "Bio Eier"
+    print(f"Suche: {term}\n")
+    client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    try:
+        msg = await client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=300,
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 2}],
+            messages=[{"role": "user", "content": f"Was kostet {term} pro kg bei Rewe? Antworte mit PREIS: X.XX"}],
+        )
+        print(f"Stop-Reason: {msg.stop_reason}")
+        for i, block in enumerate(msg.content):
+            print(f"\nBlock {i}: type={block.type}")
+            if hasattr(block, "text"):
+                print(f"Text: {block.text}")
+            else:
+                print(f"Attrs: {[a for a in dir(block) if not a.startswith('_')]}")
+    except Exception as e:
+        print(f"Fehler: {type(e).__name__}: {e}")
 
 asyncio.run(main())

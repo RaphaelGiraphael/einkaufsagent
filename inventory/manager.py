@@ -395,6 +395,19 @@ def delete_inventory_by_name(name: str) -> int:
         conn.close()
 
 
+def has_any_inventory(name: str) -> bool:
+    """True wenn für diesen Namen irgendwas im Vorrat ist (einheitsunabhängig)."""
+    conn = get_connection(_db_path())
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM inventory WHERE lower(name) = lower(?) AND quantity > 0 LIMIT 1",
+            (name,),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 def get_missing_items() -> list[dict]:
     """
     Gibt Zutaten zurück, die in den Bestellungen des aktuellen Warenkorbs
@@ -423,11 +436,19 @@ def get_missing_items() -> list[dict]:
             order_ids,
         ).fetchall()
 
+        # Aktuelle Inventar-Namen holen – Artikel die jetzt vorrätig sind rausfiltern
+        inv_names = {
+            r[0].lower()
+            for r in conn.execute(
+                "SELECT DISTINCT lower(name) FROM inventory WHERE quantity > 0"
+            ).fetchall()
+        }
+
         seen: set[str] = set()
         result = []
         for row in rows:
             key = row["ingredient_name"].lower()
-            if key not in seen:
+            if key not in seen and key not in inv_names:
                 seen.add(key)
                 result.append(dict(row))
         return result

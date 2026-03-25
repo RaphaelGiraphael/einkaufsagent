@@ -534,22 +534,33 @@ async def cmd_leeren(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cmd_warenkorb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Zeigt was der Bot aktuell als 'im Warenkorb' gespeichert hat."""
+    """Liest den Live-Warenkorb von gemuese-bestellen.de."""
     if not _is_allowed(update):
         return
-    from shop.cart import get_cart_state_items
-    items = get_cart_state_items()
-    if not items:
-        await update.message.reply_text(
-            "📭 Kein Cart-Protokoll vorhanden.\n"
-            "Entweder wurde noch nichts bestellt oder der Cart wurde mit /leeren geleert."
-        )
-        return
-    lines = [f"🛒 *{len(items)} Artikel im Bot-Protokoll:*"]
-    for item in items:
-        lines.append(f"  · {item['product_name']}")
-    lines.append("\n_Tipp: Nach manueller Bestellung /leeren aufrufen._")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("⏳ Lese Warenkorb von der Website...")
+    from shop.browser import BrowserSession
+    from shop.cart import get_cart_contents
+    try:
+        async with BrowserSession() as session:
+            await session.login()
+            contents = await get_cart_contents(session)
+        items = contents.get("items", [])
+        if not items:
+            await update.message.reply_text(
+                "📭 *Warenkorb ist leer.*\n\n_Quelle: gemuese-bestellen.de_",
+                parse_mode="Markdown",
+            )
+            return
+        lines = [f"🛒 *{len(items)} Artikel im Warenkorb:*"]
+        for item in items:
+            lines.append(f"  · {item.get('name', '?')}")
+        if contents.get("total_text"):
+            lines.append(f"\n*Summe:* {contents['total_text']}")
+        lines.append(f"\n🔗 [Warenkorb öffnen]({contents['cart_url']})")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    except Exception as e:
+        logger.exception("Fehler bei /warenkorb")
+        await update.message.reply_text(f"❌ Fehler beim Lesen des Warenkorbs: {e}")
 
 
 async def cmd_raus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

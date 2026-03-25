@@ -344,20 +344,13 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
       to_order = max(0, recipe_needed - effective_available)
     """
     from inventory.manager import get_available_qtys  # noqa: PLC0415
-    from shop.cart import fill_cart, get_cart_state_items, get_cart_contents, clear_cart_state  # noqa: PLC0415
+    from inventory.manager import has_any_inventory  # noqa: PLC0415
+    from shop.cart import fill_cart, get_cart_state_items  # noqa: PLC0415
 
     cart_state = get_cart_state_items()
 
     async with BrowserSession() as session:
         await session.login()
-
-        # Auto-Erkennung: Ist der echte Warenkorb leer obwohl DB-State gefüllt ist?
-        if cart_state:
-            live_cart = await get_cart_contents(session)
-            if not live_cart.get("items"):
-                logger.info("Warenkorb ist leer – DB-Cart-State wird automatisch geleert")
-                clear_cart_state()
-                cart_state = []
 
         # Inventar-Mengen (löst auch Haltbarkeits-Decay aus)
         inv_qtys = get_available_qtys(ingredients)
@@ -435,7 +428,8 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
                     search_ingredient = {**ingredient, "quantity": remaining_orig}
                 else:
                     # EL, TL, Prise, Packung …: Presence-Check reicht
-                    if inv_qty_orig > 0:
+                    # Vorrat einheitsunabhängig (z.B. "Salz" in g vs. Prise im Rezept)
+                    if inv_qty_orig > 0 or has_any_inventory(name_lower):
                         continue
                     if name_lower in cart_ingredient_names:
                         already_in_cart.append({**ingredient})

@@ -71,6 +71,14 @@ async def _add_item_to_cart(session: BrowserSession, item: dict) -> bool:
         logger.warning("Kein URL oder Produkt-ID für '%s'", item.get("name", "?"))
         return False
 
+    # Anzahl Pakete: nur für zählbare Einheiten (Stück, Zehe, Bund …)
+    _COUNTABLE_UNITS = {"stück", "stk", "st", "stücke", "zehe", "bund", ""}
+    ing_unit = (item.get("ingredient_unit") or "").lower().strip().rstrip(".")
+    if ing_unit in _COUNTABLE_UNITS:
+        n_packages = max(1, int(float(item.get("quantity") or 1)))
+    else:
+        n_packages = 1  # g/ml/EL/TL: immer 1 Paket
+
     try:
         # Zur Produktseite navigieren (URL-Check läuft in goto())
         if product_url:
@@ -88,6 +96,13 @@ async def _add_item_to_cart(session: BrowserSession, item: dict) -> bool:
                 if hidden:
                     product_id = await hidden.get_attribute("value")
 
+            # Menge ins Form-Input setzen (Shopware 6: lineItems[id][quantity])
+            qty_input = await form.query_selector("input[name*='[quantity]']")
+            if qty_input and n_packages > 1:
+                await session.page.evaluate(
+                    "(el, q) => { el.value = q; }", qty_input, n_packages
+                )
+
             # Form absenden – bleibt auf Produktseite oder zeigt off-canvas Cart
             await session.page.evaluate("form => form.submit()", form)
             await session.page.wait_for_load_state("domcontentloaded", timeout=8000)
@@ -95,7 +110,7 @@ async def _add_item_to_cart(session: BrowserSession, item: dict) -> bool:
             # Prüfen ob wir noch auf einer erlaubten Seite sind
             current_url = session.page.url
             _check_url(current_url)  # Sicherheitscheck
-            logger.debug("Nach add-to-cart URL: %s", current_url)
+            logger.debug("Nach add-to-cart URL: %s (qty=%d)", current_url, n_packages)
             return True
 
         # Strategie 2: .btn-buy klicken (Fallback)

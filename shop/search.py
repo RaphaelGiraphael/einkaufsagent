@@ -345,12 +345,20 @@ async def find_and_fill_cart(ingredients: list[dict]) -> dict:
     """
     from inventory.manager import get_available_qtys  # noqa: PLC0415
     from inventory.manager import has_any_inventory  # noqa: PLC0415
-    from shop.cart import fill_cart, get_cart_state_items  # noqa: PLC0415
+    from shop.cart import fill_cart, get_cart_state_items, is_cart_empty, clear_cart_state  # noqa: PLC0415
 
     cart_state = get_cart_state_items()
 
     async with BrowserSession() as session:
         await session.login()
+
+        # Auto-Erkennung: Warenkorb auf der Website leer obwohl DB-State gefüllt?
+        # Nutzt explizite Leer-Erkennung (Text/CSS) statt fehlender Artikel-Selektoren.
+        if cart_state:
+            if await is_cart_empty(session):
+                logger.info("Warenkorb ist leer – DB-Cart-State wird automatisch geleert")
+                clear_cart_state()
+                cart_state = []
 
         # Inventar-Mengen (löst auch Haltbarkeits-Decay aus)
         inv_qtys = get_available_qtys(ingredients)

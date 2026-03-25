@@ -237,6 +237,41 @@ def clear_cart_state() -> int:
         conn.close()
 
 
+async def is_cart_empty(session: BrowserSession) -> bool:
+    """
+    Prüft zuverlässig ob der Warenkorb leer ist – sucht explizit nach dem
+    Leer-Indikator, nicht nach fehlenden Artikel-Zeilen.
+    Gibt True zurück wenn der Warenkorb definitiv leer ist,
+    False wenn Artikel vorhanden ODER Prüfung nicht eindeutig.
+    """
+    cart_url = f"{BASE_URL}/checkout/cart"
+    try:
+        await session.goto(cart_url, timeout=15000)
+        await session.page.wait_for_load_state("domcontentloaded")
+        empty = await session.page.evaluate("""
+            () => {
+                // Explizite Leer-Indikatoren (Shopware 6 + gängige Themes)
+                const selectors = [
+                    '.cart-empty', '.is-empty', '[data-empty-cart]',
+                    '.checkout-aside-empty', '.cart-is-empty',
+                ];
+                for (const sel of selectors) {
+                    if (document.querySelector(sel)) return true;
+                }
+                // Text-Fallback: "leer" im Warenkorb-Bereich
+                const main = document.querySelector('main, .content-main, #content') || document.body;
+                const text = main.innerText.toLowerCase();
+                return text.includes('warenkorb ist leer')
+                    || text.includes('cart is empty')
+                    || text.includes('your cart is empty');
+            }
+        """)
+        return bool(empty)
+    except Exception as e:
+        logger.debug("is_cart_empty Prüfung fehlgeschlagen: %s", e)
+        return False  # Im Zweifel: nicht löschen
+
+
 async def get_cart_contents(session: BrowserSession) -> dict:
     """
     Liest den aktuellen Warenkorb per JavaScript aus (theme-unabhängig).

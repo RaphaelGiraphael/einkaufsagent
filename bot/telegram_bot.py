@@ -867,7 +867,9 @@ async def handle_cart_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 def build_application(token: str) -> Application:
-    app = Application.builder().token(token).build()
+    from telegram.ext import PicklePersistence
+    persistence = PicklePersistence(filepath=os.getenv("BOT_PERSISTENCE_PATH", "bot_persistence.pkl"))
+    app = Application.builder().token(token).persistence(persistence).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("hilfe", cmd_hilfe))

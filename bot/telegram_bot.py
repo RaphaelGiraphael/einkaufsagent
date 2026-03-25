@@ -732,8 +732,10 @@ async def _process_recipe(
     from utils.report import format_report, save_order
 
     try:
+        print("DBG-A: parse_recipe start", flush=True)
         # 1. Zutaten parsen + zusammenführen (verhindert Doppelbestellungen)
         ingredients = merge_ingredients(await parse_recipe(text, image_bytes))
+        print(f"DBG-B: ingredients={ingredients}", flush=True)
         if not ingredients:
             await update.message.reply_text(
                 "❌ Ich konnte keine Zutaten in deiner Nachricht finden.\n"
@@ -743,11 +745,13 @@ async def _process_recipe(
 
         # Vorschau – alle Zutaten anzeigen
         preview_lines = [f"• {i['quantity']} {i['unit']} {i['name']}" for i in ingredients]
+        print("DBG-C: sende Preview", flush=True)
         await update.message.reply_text(
             f"✅ *{len(ingredients)} Zutaten erkannt:*\n" + "\n".join(preview_lines) +
             "\n\n⏳ Prüfe Vorrat und befülle Warenkorb...",
             parse_mode="Markdown",
         )
+        print("DBG-D: Preview gesendet", flush=True)
 
         # 2+3. Interims-Vorrat + Shop (unified):
         # find_and_fill_cart prüft Inventar + Warenkorb und bestellt nur Fehlmengen

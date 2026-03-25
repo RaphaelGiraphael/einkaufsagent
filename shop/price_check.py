@@ -34,7 +34,7 @@ async def _fetch_via_claude_search(product_name: str) -> dict | None:
         client = _anthropic.AsyncAnthropic(api_key=api_key)
         message = await client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=300,
+            max_tokens=1024,
             tools=[{
                 "type": "web_search_20250305",
                 "name": "web_search",
@@ -66,7 +66,8 @@ async def _fetch_via_claude_search(product_name: str) -> dict | None:
             if "KEIN TREFFER" in raw:
                 return None
 
-            price_m = _re.search(r'PREIS:\s*(\d+)[,\.](\d+)', raw)
+            # Matches: "PREIS: 6.54", "PREIS: **6,54**", "PREIS: 6,54€/kg"
+            price_m = _re.search(r'PREIS:\s*\*{0,2}(\d+)[,\.](\d+)', raw)
             product_m = _re.search(r'PRODUKT:\s*(.+)', raw)
             market_m = _re.search(r'MARKT:\s*(.+)', raw)
 

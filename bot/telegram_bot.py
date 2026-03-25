@@ -785,14 +785,10 @@ async def _process_recipe(
 
         await update.message.reply_text(report, parse_mode="Markdown")
 
-        # 7. Preisvergleich im Hintergrund – kommt als separate Folgenachricht
+        # 7. Preisvergleich (synchron zum Debuggen)
         cart_items = result.get("cart_items", [])
-        logger.info("Preisvergleich: %d Artikel in cart_items", len(cart_items))
-        if cart_items:
-            context.application.create_task(
-                _send_price_warnings(update, cart_items),
-                update=update,
-            )
+        logger.warning("DEBUG Preisvergleich: %d Artikel", len(cart_items))
+        await _send_price_warnings(update, cart_items)
 
         # Unsichere Artikel: Inline-Buttons zur Bestätigung
         uncertain = result.get("uncertain", [])
